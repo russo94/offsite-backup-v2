@@ -1,51 +1,133 @@
+#!/usr/bin/env bash
+
+# shellcheck disable=SC2034
+
 # ==============================================================================
 # Offsite Backup V2 Configuration
 # ==============================================================================
+#
+# Copy this file to:
+#
+#   backup.conf
+#
+# Then update the values for your environment.
+#
+# Keep backup.conf private. It may contain notification credentials and is
+# excluded from Git by the supplied .gitignore file.
+# ==============================================================================
 
-# Source directory (local Proxmox backups)
+
+# ==============================================================================
+# Backup Paths
+# ==============================================================================
+
+# Directory containing the local backup files to copy.
+#
+# Example for Proxmox vzdump backups:
+#   SOURCE="/backup"
 SOURCE="/backup"
 
-# USB backup destination
+
+# Mount point of the offsite backup filesystem.
+#
+# This should be the mounted root of the dedicated USB or external disk.
 DESTINATION="/mnt/offsite-backup"
 
-# Snapshot storage
-SNAPSHOT_DIR="$DESTINATION/snapshots"
 
-# Logs
-LOG_DIR="$DESTINATION/logs"
+# Snapshot storage directory.
+SNAPSHOT_DIR="${DESTINATION}/snapshots"
 
-# Metadata
-METADATA_DIR="$DESTINATION/metadata"
 
-# Lock file
-LOCK_FILE="/var/run/offsite-backup-v2.lock"
+# Backup log directory.
+LOG_DIR="${DESTINATION}/logs"
 
-# Expected USB UUID
+
+# Snapshot metadata directory.
+METADATA_DIR="${DESTINATION}/metadata"
+
+
+# Runtime lock file used to prevent overlapping backup runs.
+LOCK_FILE="/run/offsite-backup-v2.lock"
+
+
+# ==============================================================================
+# Destination Validation
+# ==============================================================================
+
+# Filesystem UUID expected at DESTINATION.
+#
+# Find the UUID with:
+#
+#   lsblk -f
+#
+# The backup will refuse to run if the mounted destination does not match this
+# UUID. This helps prevent backups from being written to the local root
+# filesystem when the external disk is not mounted.
 EXPECTED_UUID="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 
-# Minimum free space required (GB)
+
+# Minimum free space required on the destination filesystem, in GiB.
 MIN_FREE_GB=10
 
-# Retention policy
+
+# ==============================================================================
+# Retention Policy
+# ==============================================================================
+
+# Number of daily snapshots to retain.
 KEEP_DAILY=7
+
+
+# Number of weekly snapshots to retain.
 KEEP_WEEKLY=4
+
+
+# Number of monthly snapshots to retain.
 KEEP_MONTHLY=6
 
-# Retention execution mode
-# Allowed values:
-#   dry-run = report what would be deleted
-#   delete  = permanently delete expired snapshots
-RETENTION_MODE="delete"
 
-# Snapshot version
+# Retention execution mode.
+#
+# Allowed values:
+#
+#   dry-run
+#       Report snapshots that would be deleted without removing them.
+#
+#   delete
+#       Permanently delete snapshots selected by the retention policy.
+#
+# Keep this set to dry-run until you have reviewed the retention output.
+RETENTION_MODE="dry-run"
+
+
+# ==============================================================================
+# Backup Metadata
+# ==============================================================================
+
+# Version recorded in snapshot metadata.
 BACKUP_VERSION="2.0"
+
 
 # ==============================================================================
 # Notifications
 # ==============================================================================
 
+# Enable or disable notifications.
+#
+# Allowed values:
+#   true
+#   false
 NOTIFY_ENABLED=false
 
+
+# Notification provider.
+#
+# Currently supported:
+#   discord
 NOTIFY_METHOD="discord"
 
+
+# Discord webhook URL.
+#
+# Leave empty when notifications are disabled.
 DISCORD_WEBHOOK_URL=""
