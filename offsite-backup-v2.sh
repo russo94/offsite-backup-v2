@@ -5,21 +5,21 @@
 # Main Orchestrator
 # ==============================================================================
 
-set -euo pipefail
+set -Eeuo pipefail
 
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 
 # ==============================================================================
-# Load configuration
+# Load Configuration
 # ==============================================================================
 
 source "${SCRIPT_DIR}/backup.conf"
 
 
 # ==============================================================================
-# Load modules
+# Load Modules
 # ==============================================================================
 
 source "${SCRIPT_DIR}/lib/util.sh"
@@ -40,10 +40,12 @@ source "${SCRIPT_DIR}/lib/health.sh"
 CURRENT_STAGE="Starting"
 
 
-
 backup_failed() {
 
-    local EXIT_CODE=$?
+    local EXIT_CODE="${1:-1}"
+    local FAILED_COMMAND="${2:-Unknown}"
+    local FAILED_LINE="${3:-Unknown}"
+    local FAILURE_MESSAGE
 
     FAILURE_MESSAGE="🚨 OFFSITE BACKUP FAILED
 
@@ -54,10 +56,10 @@ backup_failed() {
    ${CURRENT_STAGE}
 
 ⚙️ Command:
-   ${BASH_COMMAND}
+   ${FAILED_COMMAND}
 
 📍 Line:
-   ${BASH_LINENO[0]}
+   ${FAILED_LINE}
 
 ⏰ Time:
    $(date '+%Y-%m-%d %H:%M:%S')
@@ -68,11 +70,9 @@ backup_failed() {
 📌 Check:
    journalctl -u offsite-backup-v2.service"
 
-
-    send_notification "$FAILURE_MESSAGE"
+    send_notification "$FAILURE_MESSAGE" || true
 
 }
-
 
 
 # ==============================================================================
@@ -90,15 +90,13 @@ case "$COMMAND" in
         exit 0
         ;;
 
-
     backup)
         ;;
-
 
     *)
 
         echo "Usage:"
-        echo "  $0            Run backup"
+        echo "  $0           Run backup"
         echo "  $0 health    Run health report"
         exit 1
         ;;
@@ -106,9 +104,8 @@ case "$COMMAND" in
 esac
 
 
-
 # ==============================================================================
-# Runtime
+# Runtime Setup
 # ==============================================================================
 
 mkdir -p "$LOG_DIR"
@@ -126,19 +123,17 @@ if ! flock -n 9; then
 fi
 
 
-
 cleanup() {
 
     if [[ -n "${TEMP_SNAPSHOT:-}" && -d "${TEMP_SNAPSHOT:-}" ]]; then
-        rm -rf "$TEMP_SNAPSHOT"
+        rm -rf "$TEMP_SNAPSHOT" || true
     fi
 
 }
 
 
 trap cleanup EXIT
-trap backup_failed ERR
-
+trap 'backup_failed "$?" "$BASH_COMMAND" "$LINENO"' ERR
 
 
 # ==============================================================================
@@ -174,7 +169,6 @@ run_retention
 CURRENT_STAGE="Finalizing Backup"
 
 
-
 END_TIME=$(date +%s)
 
 
@@ -183,21 +177,32 @@ DURATION=$((END_TIME - START_TIME))
 
 SNAPSHOT_SIZE=$(du -sh "$CURRENT_SNAPSHOT" | awk '{print $1}')
 
-SNAPSHOT_NAME=$(basename "$CURRENT_SNAPSHOT")
 
+SNAPSHOT_NAME=$(basename "$CURRENT_SNAPSHOT")
 
 
 # ==============================================================================
 # Read Snapshot Metadata
 # ==============================================================================
 
-SNAPSHOT_METADATA="$CURRENT_SNAPSHOT/.snapshot-info"
-
-KERNEL_VERSION=$(grep "^KERNEL=" "$SNAPSHOT_METADATA" | cut -d= -f2)
-
-PVE_VERSION_INFO=$(grep "^PVE_VERSION=" "$SNAPSHOT_METADATA" | cut -d= -f2-)
+SNAPSHOT_METADATA="${CURRENT_SNAPSHOT}/.snapshot-info"
 
 
+KERNEL_VERSION=$(
+    grep "^KERNEL=" "$SNAPSHOT_METADATA" |
+        cut -d= -f2
+)
+
+
+PVE_VERSION_INFO=$(
+    grep "^PVE_VERSION=" "$SNAPSHOT_METADATA" |
+        cut -d= -f2-
+)
+
+
+# ==============================================================================
+# Completion Logging
+# ==============================================================================
 
 log_section "Backup Completed"
 
@@ -207,7 +212,6 @@ log_success "Type     : $CURRENT_SNAPSHOT_TYPE"
 log_success "Size     : $SNAPSHOT_SIZE"
 log_success "Duration : ${DURATION} seconds"
 log_success "Log File : $LOG_FILE_PATH"
-
 
 
 # ==============================================================================
@@ -260,4 +264,6 @@ BACKUP_MESSAGE="✅ OFFSITE BACKUP COMPLETED
    SUCCESS"
 
 
-send_notification "$BACKUP_MESSAGE"
+if ! send_notification "$BACKUP_MESSAGE"; then
+    log_warning "Backup completed, but the success notification failed."
+fi
