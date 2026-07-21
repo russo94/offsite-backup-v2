@@ -27,24 +27,34 @@ create_snapshot() {
     fi
 
     if [[ "$CURRENT_SNAPSHOT_TYPE" == "incremental" ]]; then
-        rsync \
+
+        if ! rsync \
             -aHAX \
             --delete \
             --link-dest="$LAST_SNAPSHOT" \
             "$SOURCE"/ \
-            "$TEMP_SNAPSHOT"/
+            "$TEMP_SNAPSHOT"/; then
+
+            log_error "rsync failed."
+            rm -rf "$TEMP_SNAPSHOT"
+            return 1
+
+        fi
+
     else
-        rsync \
+
+        if ! rsync \
             -aHAX \
             --delete \
             "$SOURCE"/ \
-            "$TEMP_SNAPSHOT"/
-    fi
+            "$TEMP_SNAPSHOT"/; then
 
-    if [[ $? -ne 0 ]]; then
-        log_error "rsync failed."
-        rm -rf "$TEMP_SNAPSHOT"
-        exit 1
+            log_error "rsync failed."
+            rm -rf "$TEMP_SNAPSHOT"
+            return 1
+
+        fi
+
     fi
 
     mv "$TEMP_SNAPSHOT" "$FINAL_SNAPSHOT"
@@ -55,4 +65,5 @@ create_snapshot() {
 
     log_success "Snapshot created successfully."
     log_info "Snapshot type: ${CURRENT_SNAPSHOT_TYPE}"
+
 }

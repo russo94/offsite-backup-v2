@@ -1,0 +1,51 @@
+# ==============================================================================
+# Offsite Backup V2 Configuration
+# ==============================================================================
+
+# Source directory (local Proxmox backups)
+SOURCE="/backup"
+
+# USB backup destination
+DESTINATION="/mnt/offsite-backup"
+
+# Snapshot storage
+SNAPSHOT_DIR="$DESTINATION/snapshots"
+
+# Logs
+LOG_DIR="$DESTINATION/logs"
+
+# Metadata
+METADATA_DIR="$DESTINATION/metadata"
+
+# Lock file
+LOCK_FILE="/var/run/offsite-backup-v2.lock"
+
+# Expected USB UUID
+EXPECTED_UUID="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+
+# Minimum free space required (GB)
+MIN_FREE_GB=10
+
+# Retention policy
+KEEP_DAILY=7
+KEEP_WEEKLY=4
+KEEP_MONTHLY=6
+
+# Retention execution mode
+# Allowed values:
+#   dry-run = report what would be deleted
+#   delete  = permanently delete expired snapshots
+RETENTION_MODE="delete"
+
+# Snapshot version
+BACKUP_VERSION="2.0"
+
+# ==============================================================================
+# Notifications
+# ==============================================================================
+
+NOTIFY_ENABLED=false
+
+NOTIFY_METHOD="discord"
+
+DISCORD_WEBHOOK_URL=""
