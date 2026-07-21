@@ -569,13 +569,11 @@ ${OVERALL_TITLE}
 
     if ! send_notification "$REPORT"; then
         echo
-        echo "Warning: health notification could not be sent."
+        log_warn "Health notification could not be sent."
     fi
 
 
-    echo
-    echo "Health log:"
-    echo "$HEALTH_LOG"
+    printf "\nHealth log:\n%s\n" "$HEALTH_LOG"
 
 
     return "$HEALTH_EXIT_CODE"
