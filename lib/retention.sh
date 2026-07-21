@@ -1,5 +1,7 @@
 #!/bin/bash
 
+# shellcheck disable=SC2034
+
 # ==============================================================================
 # Offsite Backup V2
 # Retention Engine
@@ -29,7 +31,6 @@ declare -A RETENTION_REASONS=()
 RETENTION_TOTAL=0
 RETENTION_KEPT=0
 RETENTION_DELETED=0
-
 
 
 # ==============================================================================
@@ -70,7 +71,6 @@ _collect_snapshots() {
 }
 
 
-
 # ==============================================================================
 # Keep helpers
 # ==============================================================================
@@ -94,7 +94,6 @@ _mark_snapshot_to_keep() {
 }
 
 
-
 _snapshot_is_kept() {
 
     local snapshot="$1"
@@ -102,7 +101,6 @@ _snapshot_is_kept() {
     [[ -n "${RETENTION_REASONS[$snapshot]:-}" ]]
 
 }
-
 
 
 # ==============================================================================
@@ -122,7 +120,6 @@ _apply_latest_retention() {
 }
 
 
-
 _apply_daily_retention() {
 
     local snapshot
@@ -132,14 +129,17 @@ _apply_daily_retention() {
     local -A selected_dates=()
 
 
-    for snapshot in "${RETENTION_SNAPSHOTS[@]}"; do
+    if (( KEEP_DAILY <= 0 )); then
+        return 0
+    fi
 
+
+    for snapshot in "${RETENTION_SNAPSHOTS[@]}"; do
 
         snapshot_date="${snapshot:0:10}"
 
 
         if [[ -z "${selected_dates[$snapshot_date]:-}" ]]; then
-
 
             _mark_snapshot_to_keep \
                 "$snapshot" \
@@ -156,14 +156,11 @@ _apply_daily_retention() {
                 break
             fi
 
-
         fi
-
 
     done
 
 }
-
 
 
 _apply_weekly_retention() {
@@ -176,9 +173,12 @@ _apply_weekly_retention() {
     local -A selected_weeks=()
 
 
+    if (( KEEP_WEEKLY <= 0 )); then
+        return 0
+    fi
+
 
     for snapshot in "${RETENTION_SNAPSHOTS[@]}"; do
-
 
         epoch="$(snapshot_epoch "$snapshot")"
 
@@ -186,9 +186,7 @@ _apply_weekly_retention() {
         week_key="$(date -d "@$epoch" '+%G-W%V')"
 
 
-
         if [[ -z "${selected_weeks[$week_key]:-}" ]]; then
-
 
             _mark_snapshot_to_keep \
                 "$snapshot" \
@@ -205,14 +203,11 @@ _apply_weekly_retention() {
                 break
             fi
 
-
         fi
-
 
     done
 
 }
-
 
 
 _apply_monthly_retention() {
@@ -224,16 +219,17 @@ _apply_monthly_retention() {
     local -A selected_months=()
 
 
+    if (( KEEP_MONTHLY <= 0 )); then
+        return 0
+    fi
+
 
     for snapshot in "${RETENTION_SNAPSHOTS[@]}"; do
-
 
         month_key="${snapshot:0:7}"
 
 
-
         if [[ -z "${selected_months[$month_key]:-}" ]]; then
-
 
             _mark_snapshot_to_keep \
                 "$snapshot" \
@@ -250,14 +246,11 @@ _apply_monthly_retention() {
                 break
             fi
 
-
         fi
-
 
     done
 
 }
-
 
 
 _build_delete_list() {
@@ -268,9 +261,7 @@ _build_delete_list() {
     RETENTION_DELETE_LIST=()
 
 
-
     for snapshot in "${RETENTION_SNAPSHOTS[@]}"; do
-
 
         if ! _snapshot_is_kept "$snapshot"; then
 
@@ -278,10 +269,10 @@ _build_delete_list() {
 
         fi
 
-
     done
 
 }
+
 
 # ==============================================================================
 # Retention Plan Builder
@@ -310,7 +301,6 @@ build_retention_plan() {
 }
 
 
-
 # ==============================================================================
 # Reporting
 # ==============================================================================
@@ -329,15 +319,17 @@ _print_retention_report() {
     log_info "Mode  : ${RETENTION_MODE}"
 
 
-
     if (( ${#RETENTION_SNAPSHOTS[@]} == 0 )); then
 
         log_warn "No valid snapshots were found."
 
+        RETENTION_TOTAL=0
+        RETENTION_KEPT=0
+        RETENTION_DELETED=0
+
         return 0
 
     fi
-
 
 
     echo
@@ -345,24 +337,18 @@ _print_retention_report() {
     log_info "KEEP"
 
 
-
     for snapshot in "${RETENTION_SNAPSHOTS[@]}"; do
 
-
         if _snapshot_is_kept "$snapshot"; then
-
 
             log_success "$snapshot (${RETENTION_REASONS[$snapshot]})"
 
 
             ((kept_count += 1))
 
-
         fi
 
-
     done
-
 
 
     echo
@@ -370,15 +356,11 @@ _print_retention_report() {
     log_info "DELETE"
 
 
-
     if (( delete_count == 0 )); then
-
 
         log_info "No snapshots are eligible for deletion."
 
-
     else
-
 
         for snapshot in "${RETENTION_DELETE_LIST[@]}"; do
 
@@ -386,9 +368,7 @@ _print_retention_report() {
 
         done
 
-
     fi
-
 
 
     echo
@@ -398,16 +378,13 @@ _print_retention_report() {
     log_info "Delete          : $delete_count"
 
 
-
-    # Export retention statistics
+    # Export retention statistics.
 
     RETENTION_TOTAL="${#RETENTION_SNAPSHOTS[@]}"
     RETENTION_KEPT="$kept_count"
     RETENTION_DELETED="$delete_count"
 
-
 }
-
 
 
 # ==============================================================================
@@ -423,7 +400,6 @@ _execute_retention_deletions() {
     local deleted_count=0
 
 
-
     if [[ "$RETENTION_MODE" != "delete" ]]; then
 
         log_warn "Dry run only. No snapshots were deleted."
@@ -431,7 +407,6 @@ _execute_retention_deletions() {
         return 0
 
     fi
-
 
 
     if (( ${#RETENTION_DELETE_LIST[@]} == 0 )); then
@@ -443,28 +418,30 @@ _execute_retention_deletions() {
     fi
 
 
-
     log_section "Executing Retention Deletions"
 
 
+    if ! resolved_snapshot_dir=$(realpath -- "$SNAPSHOT_DIR"); then
 
-    resolved_snapshot_dir="$(realpath "$SNAPSHOT_DIR")"
-
-
-
-    if [[ -z "$resolved_snapshot_dir" ]]; then
-
-        log_error "Unable to resolve snapshot directory."
+        log_error "Unable to resolve snapshot directory:"
+        log_error "  $SNAPSHOT_DIR"
 
         return 1
 
     fi
 
 
+    if [[ -z "$resolved_snapshot_dir" || ! -d "$resolved_snapshot_dir" ]]; then
+
+        log_error "Resolved snapshot directory is invalid:"
+        log_error "  ${resolved_snapshot_dir:-Unavailable}"
+
+        return 1
+
+    fi
+
 
     for snapshot in "${RETENTION_DELETE_LIST[@]}"; do
-
-
 
         if ! is_snapshot_name "$snapshot"; then
 
@@ -475,9 +452,7 @@ _execute_retention_deletions() {
         fi
 
 
-
         snapshot_path="${SNAPSHOT_DIR}/${snapshot}"
-
 
 
         if [[ ! -d "$snapshot_path" ]]; then
@@ -489,19 +464,24 @@ _execute_retention_deletions() {
         fi
 
 
+        if ! resolved_snapshot=$(realpath -- "$snapshot_path"); then
 
-        resolved_snapshot="$(realpath "$snapshot_path")"
-
-
-
-        if [[ -z "$resolved_snapshot" ]]; then
-
-            log_error "Unable to resolve snapshot path: $snapshot"
+            log_error "Unable to resolve snapshot path:"
+            log_error "  $snapshot_path"
 
             return 1
 
         fi
 
+
+        if [[ -z "$resolved_snapshot" ]]; then
+
+            log_error "Resolved snapshot path is empty:"
+            log_error "  $snapshot_path"
+
+            return 1
+
+        fi
 
 
         case "$resolved_snapshot" in
@@ -521,20 +501,22 @@ _execute_retention_deletions() {
         esac
 
 
+        if ! rm -rf -- "$resolved_snapshot"; then
 
-        rm -rf -- "$resolved_snapshot"
+            log_error "Failed to delete snapshot:"
+            log_error "  $resolved_snapshot"
 
+            return 1
+
+        fi
 
 
         log_success "Deleted snapshot: $snapshot"
 
 
-
         ((deleted_count += 1))
 
-
     done
-
 
 
     log_success "Retention deletion completed: $deleted_count snapshot(s) deleted."
@@ -542,13 +524,11 @@ _execute_retention_deletions() {
 }
 
 
-
 # ==============================================================================
 # Public API
 # ==============================================================================
 
 run_retention() {
-
 
     case "$RETENTION_MODE" in
 
@@ -567,7 +547,6 @@ run_retention() {
     esac
 
 
-
     build_retention_plan
 
 
@@ -576,24 +555,26 @@ run_retention() {
 
     _execute_retention_deletions
 
-
 }
-
 
 
 run_retention_analysis() {
 
-
     local previous_mode="$RETENTION_MODE"
+    local retention_status=0
 
 
     RETENTION_MODE="dry-run"
 
 
-    run_retention
+    if ! run_retention; then
+        retention_status=$?
+    fi
 
 
     RETENTION_MODE="$previous_mode"
 
+
+    return "$retention_status"
 
 }
