@@ -50,10 +50,18 @@ log() {
     esac
 
     # Terminal (colored)
-    printf "${COLOR}[%s] [%s] %s${RESET}\n" "$TIMESTAMP" "$LEVEL" "$MESSAGE"
+    printf "%b[%s] [%s] %s%b\n" \
+        "$COLOR" \
+        "$TIMESTAMP" \
+        "$LEVEL" \
+        "$MESSAGE" \
+        "$RESET"
 
     # Log file (plain text)
-    printf "[%s] [%s] %s\n" "$TIMESTAMP" "$LEVEL" "$MESSAGE" >> "$LOG_FILE_PATH"
+    printf "[%s] [%s] %s\n" \
+        "$TIMESTAMP" \
+        "$LEVEL" \
+        "$MESSAGE" >> "$LOG_FILE_PATH"
 
 }
 
