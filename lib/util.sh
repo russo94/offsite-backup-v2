@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 
-# Shared utility functions for Phanom Backup.
+# ==============================================================================
+# Offsite Backup V2
+# Shared Utility Functions
 #
 # Keep this module small. Functions should only be added here when they are
 # genuinely reusable across multiple parts of the backup system.
+# ==============================================================================
 
 
 # Convert a byte count into a human-readable value.
@@ -12,6 +15,7 @@
 #   human_size 1073741824
 #   Output: 1.0 GiB
 human_size() {
+
     local bytes="${1:-0}"
 
     if ! [[ "$bytes" =~ ^[0-9]+$ ]]; then
@@ -40,17 +44,34 @@ human_size() {
             print human(bytes)
         }
     '
+
 }
 
 
-# Check whether a value matches the snapshot directory naming format.
+# Check whether a value matches the snapshot directory naming format and
+# represents a valid calendar date and time.
 #
 # Valid example:
 #   2026-07-20_22-27-14
 is_snapshot_name() {
-    local name="${1:-}"
 
-    [[ "$name" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}-[0-9]{2}-[0-9]{2}$ ]]
+    local name="${1:-}"
+    local formatted_date
+    local normalized_name
+
+    if ! [[ "$name" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}-[0-9]{2}-[0-9]{2}$ ]]; then
+        return 1
+    fi
+
+    formatted_date="${name/_/ }"
+    formatted_date="${formatted_date:0:13}:${formatted_date:14:2}:${formatted_date:17:2}"
+
+    if ! normalized_name=$(date --date="$formatted_date" '+%Y-%m-%d_%H-%M-%S' 2>/dev/null); then
+        return 1
+    fi
+
+    [[ "$normalized_name" == "$name" ]]
+
 }
 
 
@@ -59,6 +80,7 @@ is_snapshot_name() {
 # Example:
 #   snapshot_epoch "2026-07-20_22-27-14"
 snapshot_epoch() {
+
     local snapshot_name="${1:-}"
     local formatted_date
 
@@ -70,6 +92,7 @@ snapshot_epoch() {
     formatted_date="${formatted_date:0:13}:${formatted_date:14:2}:${formatted_date:17:2}"
 
     date --date="$formatted_date" +%s 2>/dev/null
+
 }
 
 
@@ -78,13 +101,16 @@ snapshot_epoch() {
 # Output:
 #   Integer byte count
 path_size_bytes() {
+
     local path="${1:-}"
 
     if [[ ! -e "$path" ]]; then
         return 1
     fi
 
-    du --summarize --bytes "$path" 2>/dev/null | awk '{print $1}'
+    du --summarize --bytes -- "$path" 2>/dev/null |
+        awk '{print $1}'
+
 }
 
 
@@ -92,6 +118,7 @@ path_size_bytes() {
 #
 # Returns an error if the path exists but is not a directory.
 ensure_directory() {
+
     local directory="${1:-}"
 
     if [[ -z "$directory" ]]; then
@@ -102,5 +129,6 @@ ensure_directory() {
         return 1
     fi
 
-    mkdir -p "$directory"
+    mkdir -p -- "$directory"
+
 }
