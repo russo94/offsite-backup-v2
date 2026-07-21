@@ -1,0 +1,13 @@
+# Runtime logs
+logs/
+
+# Temporary files
+*.tmp
+
+# Editor swap and backup files
+*.swp
+*~
+
+# macOS metadata
+.DS_Store
+backup.conf
