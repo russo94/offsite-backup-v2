@@ -1,5 +1,7 @@
 #!/bin/bash
 
+# shellcheck disable=SC2034
+
 # ==============================================================================
 # Offsite Backup V2
 # Dynamic Restore Verification Module
@@ -493,6 +495,65 @@ verify_snapshot_contents() {
     # --------------------------------------------------------------------------
     # Overall Restore Status
     # --------------------------------------------------------------------------
+
+    if (( RESTORE_VERIFY_TOTAL == 0 )); then
+
+        RESTORE_VERIFY_STATUS="CRITICAL"
+
+        RESTORE_VERIFY_REPORT+="
+
+🛡 Restore Readiness:
+
+   Required Checks:
+      ${RESTORE_VERIFY_REQUIRED_PASSED}/${RESTORE_VERIFY_REQUIRED_TOTAL} passed
+
+   Discovered Services:
+      ${RESTORE_VERIFY_DISCOVERED_PASSED}/${RESTORE_VERIFY_DISCOVERED_TOTAL} passed
+
+   Total Checks:
+      0/0 passed
+
+   Failed Checks:
+      0
+
+   Overall:
+      🔴 NOT READY TO RESTORE
+
+   Problem:
+      No restore verification checks were performed"
+
+        return 1
+
+    fi
+
+
+    if (( RESTORE_VERIFY_REQUIRED_FAILED > 0 )); then
+
+        RESTORE_VERIFY_STATUS="CRITICAL"
+
+        RESTORE_VERIFY_REPORT+="
+
+🛡 Restore Readiness:
+
+   Required Checks:
+      ${RESTORE_VERIFY_REQUIRED_PASSED}/${RESTORE_VERIFY_REQUIRED_TOTAL} passed
+
+   Discovered Services:
+      ${RESTORE_VERIFY_DISCOVERED_PASSED}/${RESTORE_VERIFY_DISCOVERED_TOTAL} passed
+
+   Total Checks:
+      ${RESTORE_VERIFY_PASSED}/${RESTORE_VERIFY_TOTAL} passed
+
+   Failed Checks:
+      ${RESTORE_VERIFY_FAILED}
+
+   Overall:
+      🔴 NOT READY TO RESTORE"
+
+        return 1
+
+    fi
+
 
     if (( RESTORE_VERIFY_FAILED == 0 )); then
 
