@@ -1,446 +1,290 @@
-# Offsite Backup V2
+# Offsite Backup V2 for Proxmox VE
 
-A modular snapshot-based backup system for a Proxmox host.
+A safe, modular, snapshot-based backup solution for **Proxmox Virtual Environment (VE)**.
 
-This project creates incremental backup snapshots to a dedicated USB drive using rsync hard links. It includes environment validation, structured logging, metadata generation, and configurable retention.
+This project started as a personal homelab backup script.
 
-## Project Goal
+Like many people running Proxmox at home, I wanted something simple, reliable, and completely transparent. I did not want a backup system that felt like a black box or required proprietary formats to restore my data. I wanted something I could understand from top to bottom, audit whenever I wanted, and trust when I actually needed it.
 
-The purpose of this backup system is to provide an independent offsite backup copy of important Proxmox data.
+Over time, that small script evolved into Offsite Backup V2.
 
-The design goals are:
+Today it creates efficient incremental snapshots using `rsync` and hard links, verifies the backup environment before every run, records detailed snapshot metadata, performs restore verification, manages automatic retention, generates health reports, and can send notifications when backups complete.
 
-- Simple recovery
-- Safe operation
-- Minimal storage duplication
-- Easy troubleshooting
-- Clear documentation
-- Protection against accidental deletion
+The philosophy behind this project is simple:
 
-## Current Status
+> **A backup is only valuable if you trust that you can restore it.**
 
-The backup system is operational and has been tested end-to-end.
+Rather than hiding data inside proprietary archives, every snapshot remains a normal directory that can be explored using standard Linux tools. If you know how to use `ls`, `cp`, and `rsync`, you already know how to browse and restore your backups.
 
-Implemented features:
+---
 
-- Backup destination verification
-- USB UUID verification
-- Source directory verification
-- Free-space verification
-- Snapshot creation
-- Incremental snapshots
-- Snapshot metadata
+## Who is this for?
+
+Offsite Backup V2 is intended for people who:
+
+- Run **Proxmox VE** at home or in a small lab.
+- Prefer simple and transparent backup solutions.
+- Want complete, browseable snapshots instead of proprietary backup archives.
+- Like understanding how their backup system works.
+- Enjoy learning from or extending open-source projects.
+
+If you are looking for an enterprise backup platform with centralized management, this project probably is not the right fit.
+
+If you are a homelab enthusiast who wants a backup solution you can fully understand, customize, and trust, then you are exactly who this project was built for.
+
+---
+
+## Features
+
+- Incremental snapshots using `rsync --link-dest`
+- Fully browseable snapshots
+- Hard-link deduplication for efficient storage
+- Snapshot metadata generation
+- Daily, weekly, and monthly retention policies
+- USB filesystem UUID validation
+- Minimum free-space verification
+- Restore verification
+- Health reporting
 - Structured logging
-- Retention management
-- Safe automatic deletion
+- Discord notifications
+- Modular Bash architecture
+- ShellCheck-clean codebase
 
-## Project Structure
-
-The project is organized into separate modules to keep the backup system easy to understand and maintain.
-
-offsite-backup-v2/
-├── backup.conf
-├── offsite-backup-v2.sh
-├── README.md
-├── docs/
-└── lib/
-├── logging.sh
-├── metadata.sh
-├── retention.sh
-├── snapshot.sh
-├── util.sh
-└── verify.sh
+---
 
 
-## Main Components
+## Quick Start
 
-### offsite-backup-v2.sh
+Clone the repository:
 
-The main backup orchestrator.
+```bash
+git clone https://github.com/<your-github-username>/offsite-backup-v2.git
+cd offsite-backup-v2
+```
 
-Responsibilities:
+Create your configuration file:
 
-- Load configuration
-- Load modules
-- Lock execution
-- Run environment checks
-- Create snapshots
-- Write metadata
-- Execute retention
-- Report results
+```bash
+cp backup.conf.example backup.conf
+```
 
-### backup.conf
+Edit the configuration:
 
-Central configuration file.
-
-Contains:
-
-- Backup source
-- Backup destination
-- USB UUID verification
-- Snapshot location
-- Log location
-- Retention policy
-- Backup version
-
-### lib/
-
-Contains the individual backup modules.
-
-Each module has a specific responsibility:
-
-- `verify.sh`  
-  Validates the backup environment.
-
-- `snapshot.sh`  
-  Creates backup snapshots.
-
-- `metadata.sh`  
-  Records snapshot information.
-
-- `retention.sh`  
-  Controls snapshot lifecycle and cleanup.
-
-- `logging.sh`  
-  Provides structured logging.
-
-- `util.sh`  
-  Contains shared helper functions.
-
-## Configuration
-
-The backup system is controlled through:
-
-Edit configuration:
-
-backup.conf
-
-
-Edit configuration:
-
-bash
+```bash
 nano backup.conf
+```
 
-Important configuration values:
+At a minimum, configure:
 
-Backup source
+- `SOURCE`
+- `DESTINATION`
+- `EXPECTED_UUID`
 
-Example:
+Run a syntax check:
 
-SOURCE="/backup"
-
-This is the directory that will be copied.
-
-Backup destination
-
-Example:
-
-DESTINATION="/mnt/offsite-backup"
-
-This is the mounted USB backup location.
-
-USB protection
-
-The system verifies the USB drive UUID before writing.
-
-Example:
-
-EXPECTED_UUID="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-
-This prevents accidentally writing to the wrong disk.
-
-Retention policy
-
-Example:
-
-KEEP_DAILY=7
-KEEP_WEEKLY=4
-KEEP_MONTHLY=6
-
-Meaning:
-
-Keep the last 7 daily snapshots
-Keep the last 4 weekly snapshots
-Keep the last 6 monthly snapshots
-Retention mode
-
-Testing mode:
-
-RETENTION_MODE="dry-run"
-
-Shows what would be deleted without removing anything.
-
-Production mode:
-
-RETENTION_MODE="delete"
-
-Automatically removes snapshots outside the retention policy.
-
-Backup Workflow
-
-A normal backup run follows this sequence:
-
-Start
- |
- |-- Load configuration
- |
- |-- Load modules
- |
- |-- Acquire backup lock
- |
- |-- Verify environment
- |
- |-- Create snapshot
- |
- |-- Write metadata
- |
- |-- Apply retention policy
- |
- |-- Complete backup
-
-Run a backup manually:
-
-cd /root/offsite-backup-v2
-./offsite-backup-v2.sh
-
-A successful run ends with:
-
-Backup Completed
-
-
-
-## Snapshot System
-
-The backup system uses rsync-based snapshots.
-
-Snapshots are stored in:
-
-`text
-/mnt/offsite-backup/snapshots
-
-
-Example:
-
-snapshots/
-├── 2026-07-20_23-37-14/
-├── 2026-07-21_00-19-44/
-└── current -> 2026-07-21_00-19-44
-
-Each snapshot appears as a complete backup directory.
-
-The current symbolic link always points to the newest successful snapshot.
-
-Snapshot Types
-Full snapshot
-
-A full snapshot is created when no previous snapshot exists.
-
-This copies all required data into a new snapshot directory.
-
-Incremental snapshot
-
-After the first snapshot, new backups use:
-
-rsync --link-dest
-
-Files that have not changed are hard-linked from the previous snapshot.
-
-Benefits:
-
-Saves disk space
-Keeps every snapshot independently browsable
-Makes restore simple
-Retention System
-
-The retention engine automatically manages old snapshots.
-
-Current policy:
-
-Daily   : 7
-Weekly  : 4
-Monthly : 6
-
-The retention process:
-
-Find snapshots
-      |
-      v
-Select snapshots to keep
-      |
-      v
-Build deletion list
-      |
-      v
-Delete expired snapshots
-
-A snapshot can satisfy multiple rules.
-
-Example:
-
-2026-07-21_00-19-44
-
-Latest
-Daily (2026-07-21)
-Weekly (2026-W30)
-Monthly (2026-07)
-
-Snapshots not matching any retention rule are removed when:
-
-RETENTION_MODE="delete"
-
-is enabled.
-
-Retention Safety
-
-Before deleting snapshots, the system checks:
-
-Snapshot name format
-Valid snapshot path
-Real resolved path
-Snapshot location remains inside the backup directory
-
-This prevents accidental deletion outside the backup area.
-
-
-## Restore Procedure
-
-A backup is only useful if it can be restored.
-
-The recommended restore process is to first restore into a temporary location and verify the files.
-
-Example:
-
-Create a test restore directory:
-
-``bash
-mkdir -p /root/restore-test
-
-Restore the latest snapshot:
-
-rsync -aHAX \
-    /mnt/offsite-backup/snapshots/current/ \
-    /root/restore-test/
-
-Verify the restored files:
-
-ls -la /root/restore-test
-
-After verification, the required data can be copied back to its original location.
-
-Logs and Troubleshooting
-
-Logs are stored in:
-
-/mnt/offsite-backup/logs
-
-List recent logs:
-
-ls -1t /mnt/offsite-backup/logs | head
-
-View a log:
-
-less /mnt/offsite-backup/logs/<log-file>
-Common Issues
-Backup destination is not mounted
-
-Error:
-
-Backup destination is not mounted.
-
-Check:
-
-mount | grep offsite-backup
-
-Verify the USB drive is mounted correctly.
-
-USB UUID mismatch
-
-Error:
-
-USB UUID mismatch!
-
-Check the connected disk UUID:
-
-blkid
-
-Update:
-
-EXPECTED_UUID=
-
-in:
-
-backup.conf
-Backup stops during execution
-
-Check the exit code:
-
-echo $?
-
-Check the latest log file for details.
-
-Testing retention changes
-
-Always test retention changes first using:
-
-RETENTION_MODE="dry-run"
-
-This shows which snapshots would be deleted without removing data.
-
-Validation Commands
-
-Check script syntax:
-
+```bash
 bash -n offsite-backup-v2.sh
-
-Check library syntax:
 
 for file in lib/*.sh; do
     bash -n "$file" || exit 1
 done
+```
 
-A successful syntax check produces no output.
+Run the backup:
 
-Future Improvements
+```bash
+./offsite-backup-v2.sh
+```
 
-Possible future additions:
+If everything is configured correctly, a new snapshot will be created and a `current` symbolic link will point to the latest successful backup.
 
-Automated restore verification
-Backup notifications
-USB drive health checks
-SMART monitoring
-Scheduled backups
-Remote/cloud copy
-Backup integrity checks
-Encryption support
+> **Tip**
+>
+> Before enabling automatic deletion, leave `RETENTION_MODE="dry-run"` in `backup.conf`. This lets you verify which snapshots would be removed without deleting any data.
+
+## Documentation
+
+Detailed documentation is available in the `docs/` directory.
+
+| Document | Description |
+|----------|-------------|
+| `installation.md` | Installation and initial setup |
+| `configuration.md` | Configuration reference |
+| `architecture.md` | Project architecture and module overview |
+| `retention.md` | Snapshot retention strategy |
+| `restore.md` | Restore procedures and verification |
+| `systemd.md` | Running the backup automatically with systemd |
+
+## Project Structure
+
+The project is intentionally split into small, focused modules. Each script has a single responsibility, making the code easier to understand, maintain, and extend.
+
+```text
+offsite-backup-v2/
+├── backup.conf.example      # Example configuration
+├── offsite-backup-v2.sh     # Main backup orchestrator
+├── README.md
+├── docs/
+│   ├── installation.md
+│   ├── configuration.md
+│   ├── architecture.md
+│   ├── retention.md
+│   ├── restore.md
+│   └── systemd.md
+└── lib/
+    ├── health.sh
+    ├── logging.sh
+    ├── metadata.sh
+    ├── notify.sh
+    ├── restore_verify.sh
+    ├── retention.sh
+    ├── snapshot.sh
+    └── util.sh
+```
+
+### Main Components
+
+| Component | Purpose |
+|-----------|---------|
+| `offsite-backup-v2.sh` | Main entry point that coordinates the backup process. |
+| `backup.conf` | User configuration for sources, destinations, retention, and notifications. |
+| `lib/snapshot.sh` | Creates full and incremental snapshots using `rsync`. |
+| `lib/retention.sh` | Applies daily, weekly, and monthly retention policies. |
+| `lib/metadata.sh` | Records metadata for every snapshot. |
+| `lib/logging.sh` | Provides structured logging functions. |
+| `lib/health.sh` | Performs health and environment checks. |
+| `lib/restore_verify.sh` | Validates that snapshots can be restored successfully. |
+| `lib/notify.sh` | Sends backup notifications. |
+| `lib/util.sh` | Shared helper functions used throughout the project. |
 
 
-## Restore Verification
+## How It Works
 
-A restore test was successfully performed on:
+```mermaid
+flowchart TD
 
-`text
-2026-07-21
+    A[Start Backup] --> B[Load Configuration]
+    B --> C[Validate Environment]
 
-Test procedure:
+    C --> C1[Verify Source]
+    C1 --> C2[Verify Destination]
+    C2 --> C3[Verify USB UUID]
+    C3 --> C4[Check Free Space]
 
-Selected the latest snapshot using the current symlink.
-Restored the snapshot to a temporary directory.
-Verified restored files and permissions.
+    C4 --> D[Create Snapshot]
 
-Restore command tested:
+    D --> E{Previous Snapshot?}
 
-rsync -aHAX \
-/mnt/offsite-backup/snapshots/current/ \
-/root/restore-test/
+    E -- No --> F[Full Snapshot]
+    E -- Yes --> G[Incremental Snapshot<br/>rsync --link-dest]
 
-Verification results:
+    F --> H[Write Snapshot Metadata]
+    G --> H
 
-Snapshot size : 2.5G
-Restore size  : 2.5G
+    H --> I[Update current Symlink]
+    I --> J[Restore Verification]
+    J --> K[Apply Retention Policy]
+    K --> L[Generate Health Report]
+    L --> M[Send Notification]
+    M --> N[Backup Complete]
+```
 
-Snapshot files: 20
-Restored files: 20
+Every backup follows the same predictable workflow.
 
-Result:
 
-SUCCESS - Backup restore verified
+
+Before any data is copied, the backup environment is validated to reduce the risk of common mistakes. This includes verifying the backup destination, checking the expected USB UUID, ensuring sufficient free disk space, and confirming that the source directories exist.
+
+Snapshots are created using `rsync` with `--link-dest`. The first backup is a full snapshot, while subsequent backups hard-link unchanged files from the previous snapshot. This significantly reduces storage usage while keeping every snapshot fully browseable.
+
+Each successful backup records metadata describing when it was created, which host created it, the backup version, and other useful system information. A restore verification step then confirms that the snapshot can be accessed before retention policies are applied.
+
+Finally, the backup system generates a health report and, if configured, sends a notification summarizing the backup.
+
+
+## Snapshot Layout
+
+Each backup is stored as its own directory.
+
+```text
+snapshots/
+├── 2026-07-20_23-37-14/
+│   ├── etc/
+│   ├── root/
+│   ├── var/
+│   └── .snapshot-info
+│
+├── 2026-07-21_00-19-44/
+│   ├── etc/
+│   ├── root/
+│   ├── var/
+│   └── .snapshot-info
+│
+└── current -> 2026-07-21_00-19-44
+```
+
+Although unchanged files are shared using hard links, every snapshot behaves like a complete backup. This means you can browse, compare, or restore any snapshot independently without reconstructing incremental chains.
+
+The `current` symbolic link always points to the latest successful snapshot, making restores and automation straightforward.
+
+
+## Roadmap
+
+Offsite Backup V2 is actively developed as part of my homelab. While it is already stable enough for daily use, there are several ideas planned for future releases.
+
+### Planned Features
+
+- Encrypted backup support
+- Remote replication to a second backup destination
+- Backup integrity verification
+- SMART health monitoring
+- Email notifications
+- Additional notification providers
+- Automatic restore testing
+- Expanded documentation
+- CI pipeline with automated ShellCheck and testing
+
+Suggestions and feature requests are always welcome.
+
+
+## Contributing
+
+Contributions of all sizes are welcome.
+
+Whether you want to:
+
+- Report a bug
+- Suggest a new feature
+- Improve the documentation
+- Fix a typo
+- Submit code improvements
+
+please feel free to open an issue or submit a pull request.
+
+If you contribute code, try to keep it consistent with the rest of the project:
+
+- Keep modules focused on a single responsibility.
+- Write clear, readable Bash.
+- Run ShellCheck before submitting changes.
+- Prefer safety over cleverness.
+- Document new features when appropriate.
+
+
+## License
+
+This project is licensed under the MIT License.
+
+See the `LICENSE` file for details.
+
+
+## About
+
+Offsite Backup V2 began as a small personal backup script for my own Proxmox homelab.
+
+As the project grew, I decided to refactor it into a modular, documented, and open-source backup solution that others could learn from, adapt, and improve.
+
+While it may not have every feature found in enterprise backup software, every design decision has been made with reliability, transparency, and recoverability in mind.
+
+If this project helps you protect your homelab, then it has achieved exactly what it was created for.
+
+⭐ If you find the project useful, consider starring the repository. It helps others discover it and motivates continued development.
