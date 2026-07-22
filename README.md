@@ -1,5 +1,7 @@
 # Offsite Backup V2 for Proxmox VE
 
+[![ShellCheck](https://github.com/russo94/offsite-backup-v2/actions/workflows/shellcheck.yml/badge.svg)](https://github.com/russo94/offsite-backup-v2/actions/workflows/shellcheck.yml)
+
 A safe, modular, snapshot-based backup solution for **Proxmox Virtual Environment (VE)**.
 
 This project started as a personal homelab backup script.
