@@ -1,5 +1,6 @@
 # Runtime logs
 logs/
+*.log
 
 # Temporary files
 *.tmp
@@ -10,4 +11,16 @@ logs/
 
 # macOS metadata
 .DS_Store
+
+# Windows metadata
+Thumbs.db
+desktop.ini
+
+# VS Code
+.vscode/
+
+# JetBrains IDEs
+.idea/
+
+# Local configuration
 backup.conf
