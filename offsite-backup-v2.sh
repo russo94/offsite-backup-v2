@@ -221,7 +221,7 @@ log_success "Log File : $LOG_FILE_PATH"
 BACKUP_MESSAGE="🟢 OFFSITE BACKUP SUCCESS
 
 🖥️ Host
-$(HOSTNAME)
+$(hostname)
 
 📦 Backup
 • Version: ${BACKUP_VERSION}
