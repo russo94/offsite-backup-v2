@@ -218,52 +218,36 @@ log_success "Log File : $LOG_FILE_PATH"
 # Discord Success Notification
 # ==============================================================================
 
-BACKUP_MESSAGE="✅ OFFSITE BACKUP COMPLETED
+BACKUP_MESSAGE="🟢 OFFSITE BACKUP SUCCESS
 
-🖥 Host:
-   $(hostname)
+🖥️ Host
+$(HOSTNAME)
 
-📦 Backup Version:
-   ${BACKUP_VERSION}
+📦 Backup
+• Version: ${BACKUP_VERSION}
+• Type: ${CURRENT_SNAPSHOT_TYPE}
+• Snapshot: ${SNAPSHOT_NAME}
+• Size: ${SNAPSHOT_SIZE}
 
-📸 Snapshot:
-   ${SNAPSHOT_NAME}
+🧹 Retention
+• Policy:
+  ${KEEP_DAILY} daily
+  ${KEEP_WEEKLY} weekly
+  ${KEEP_MONTHLY} monthly
 
-🔄 Type:
-   ${CURRENT_SNAPSHOT_TYPE}
+• Snapshots:
+  Total: ${RETENTION_TOTAL}
+  Kept: ${RETENTION_KEPT}
+  Deleted: ${RETENTION_DELETED}
 
-💽 Size:
-   ${SNAPSHOT_SIZE}
+⚙️ System
+• Kernel: ${KERNEL_VERSION}
+• Proxmox: ${PVE_VERSION_INFO}
 
-🧹 Retention:
+⏱️ Duration
+${DURATION} seconds
 
-   Policy:
-      ${KEEP_DAILY} daily
-      ${KEEP_WEEKLY} weekly
-      ${KEEP_MONTHLY} monthly
+✅ Status
+Backup completed successfully"
 
-   Total:
-      ${RETENTION_TOTAL} snapshots
-
-   Kept:
-      ${RETENTION_KEPT} snapshots
-
-   Deleted:
-      ${RETENTION_DELETED} snapshots
-
-🐧 Kernel:
-   ${KERNEL_VERSION}
-
-🖥 Proxmox:
-   ${PVE_VERSION_INFO}
-
-⏱ Duration:
-   ${DURATION} seconds
-
-🟢 Status:
-   SUCCESS"
-
-
-if ! send_notification "$BACKUP_MESSAGE"; then
-    log_warning "Backup completed, but the success notification failed."
-fi
+send_notification "$BACKUP_MESSAGE"
