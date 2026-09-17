@@ -51,6 +51,31 @@ LOCK_FILE="/run/offsite-backup-v2.lock"
 
 
 # ==============================================================================
+# Application Backups
+# ==============================================================================
+
+# Prepare a verified Mattermost application recovery set under SOURCE before
+# the normal Offsite Backup V2 snapshot is created.
+#
+# Allowed values:
+#   true
+#   false
+ENABLE_MATTERMOST_BACKUP=false
+
+
+# Proxmox LXC containing Mattermost.
+MATTERMOST_CTID=111
+
+
+# Host path backed up by Offsite Backup V2.
+MATTERMOST_HOST_BACKUP_ROOT="/backup/mattermost"
+
+
+# Corresponding bind-mounted path inside the Mattermost LXC.
+MATTERMOST_CONTAINER_BACKUP_ROOT="/opt/mattermost/backups"
+
+
+# ==============================================================================
 # Destination Validation
 # ==============================================================================
 
