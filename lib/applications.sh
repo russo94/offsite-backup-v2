@@ -14,6 +14,7 @@
 #
 # Public API:
 #   - prepare_application_backups
+#   - cleanup_application_backups
 # ==============================================================================
 
 
@@ -46,5 +47,12 @@ prepare_application_backups() {
             ;;
 
     esac
+
+}
+
+
+cleanup_application_backups() {
+
+    cleanup_mattermost_backup
 
 }
