@@ -25,6 +25,7 @@ source "${SCRIPT_DIR}/backup.conf"
 source "${SCRIPT_DIR}/lib/util.sh"
 source "${SCRIPT_DIR}/lib/logging.sh"
 source "${SCRIPT_DIR}/lib/verify.sh"
+source "${SCRIPT_DIR}/lib/applications.sh"
 source "${SCRIPT_DIR}/lib/snapshot.sh"
 source "${SCRIPT_DIR}/lib/metadata.sh"
 source "${SCRIPT_DIR}/lib/retention.sh"
@@ -125,6 +126,10 @@ fi
 
 cleanup() {
 
+    # Application cleanup runs first so services stopped for a consistent
+    # capture are recovered on normal exit and graceful interruption.
+    cleanup_application_backups || true
+
     if [[ -n "${TEMP_SNAPSHOT:-}" && -d "${TEMP_SNAPSHOT:-}" ]]; then
         rm -rf "$TEMP_SNAPSHOT" || true
     fi
@@ -149,6 +154,11 @@ START_TIME=$(date +%s)
 CURRENT_STAGE="Environment Checks"
 
 run_environment_checks
+
+
+CURRENT_STAGE="Application Backup Preparation"
+
+prepare_application_backups
 
 
 CURRENT_STAGE="Snapshot Creation"
