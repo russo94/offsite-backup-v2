@@ -50,6 +50,8 @@ MATTERMOST_CONTAINER_BACKUP_ROOT="${MATTERMOST_CONTAINER_BACKUP_ROOT:-/opt/matte
 # cleanup to remove an incomplete capture or recover an interrupted promotion.
 MATTERMOST_RESTART_REQUIRED=false
 MATTERMOST_ACTIVE_CANDIDATE=""
+MATTERMOST_VERIFY_DB=""
+MATTERMOST_VERIFY_SQL=""
 
 
 # ==============================================================================
@@ -146,6 +148,33 @@ cleanup_mattermost_backup() {
     local host_candidate
     local current_path
     local previous_path
+
+    # Restore-verification resources are temporary and must not survive a
+    # graceful interruption.
+    if [[ -n "${MATTERMOST_VERIFY_DB:-}" ]]; then
+
+        if pct exec "$MATTERMOST_CTID" -- \
+            runuser -u postgres -- dropdb --if-exists "$MATTERMOST_VERIFY_DB" \
+            >/dev/null 2>&1; then
+            MATTERMOST_VERIFY_DB=""
+        else
+            log_error "Unable to remove temporary Mattermost verification database during cleanup."
+            cleanup_failed=true
+        fi
+
+    fi
+
+    if [[ -n "${MATTERMOST_VERIFY_SQL:-}" ]]; then
+
+        if pct exec "$MATTERMOST_CTID" -- rm -f -- "$MATTERMOST_VERIFY_SQL" \
+            >/dev/null 2>&1; then
+            MATTERMOST_VERIFY_SQL=""
+        else
+            log_error "Unable to remove temporary Mattermost verification dump during cleanup."
+            cleanup_failed=true
+        fi
+
+    fi
 
     if [[ "${MATTERMOST_RESTART_REQUIRED:-false}" == true ]]; then
 
@@ -380,7 +409,7 @@ _verify_mattermost_backup_candidate() {
     local candidate_name="$1"
     local host_candidate="${MATTERMOST_HOST_BACKUP_ROOT}/${candidate_name}"
     local container_candidate="${MATTERMOST_CONTAINER_BACKUP_ROOT}/${candidate_name}"
-    local verify_db="mattermost_restore_verify_$(date +%s)_$$"
+    local verify_db="mattermost_restore_verify_$(date +%s)_$"
     local verify_sql="/var/tmp/${verify_db}.sql"
     local live_tables
     local restored_tables
@@ -422,6 +451,9 @@ _verify_mattermost_backup_candidate() {
         return 1
     fi
 
+    MATTERMOST_VERIFY_DB="$verify_db"
+    MATTERMOST_VERIFY_SQL="$verify_sql"
+
     # The recovery tree is intentionally restricted. Copy the dump to a
     # temporary PostgreSQL-owned file for isolated restore verification rather
     # than weakening permissions on the backup itself.
@@ -429,14 +461,15 @@ _verify_mattermost_backup_candidate() {
         cp -- "${container_candidate}/database/mattermost.sql" "$verify_sql"; then
 
         log_error "Unable to stage Mattermost dump for restore verification."
+        cleanup_mattermost_backup || true
         return 1
     fi
 
     if ! pct exec "$MATTERMOST_CTID" -- chown postgres:postgres "$verify_sql" || \
        ! pct exec "$MATTERMOST_CTID" -- chmod 0600 "$verify_sql"; then
 
-        pct exec "$MATTERMOST_CTID" -- rm -f -- "$verify_sql" || true
         log_error "Unable to secure temporary Mattermost verification dump."
+        cleanup_mattermost_backup || true
         return 1
     fi
 
@@ -445,8 +478,8 @@ _verify_mattermost_backup_candidate() {
     if ! pct exec "$MATTERMOST_CTID" -- \
         runuser -u postgres -- createdb "$verify_db"; then
 
-        pct exec "$MATTERMOST_CTID" -- rm -f -- "$verify_sql" || true
         log_error "Unable to create temporary Mattermost verification database."
+        cleanup_mattermost_backup || true
         return 1
     fi
 
@@ -494,15 +527,20 @@ _verify_mattermost_backup_candidate() {
     if ! pct exec "$MATTERMOST_CTID" -- \
         runuser -u postgres -- dropdb --if-exists "$verify_db"; then
 
-        pct exec "$MATTERMOST_CTID" -- rm -f -- "$verify_sql" || true
         log_error "Unable to remove temporary Mattermost verification database: $verify_db"
+        cleanup_mattermost_backup || true
         return 1
     fi
 
+    MATTERMOST_VERIFY_DB=""
+
     if ! pct exec "$MATTERMOST_CTID" -- rm -f -- "$verify_sql"; then
         log_error "Unable to remove temporary Mattermost verification dump: $verify_sql"
+        cleanup_mattermost_backup || true
         return 1
     fi
+
+    MATTERMOST_VERIFY_SQL=""
 
     if [[ "$verify_failed" == true ]]; then
         return 1
