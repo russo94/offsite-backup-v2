@@ -228,6 +228,7 @@ Isolated verification performed on 2026-09-18 confirmed:
 - Retention dry-run identified the older same-day snapshot correctly.
 - Real retention deletion removed only the eligible snapshot inside the isolated test snapshot tree.
 - A forced Mattermost preflight failure preserved the previously known-good snapshot pointer.
+- A SIGTERM interruption during Mattermost capture restarted Mattermost automatically, removed the incomplete candidate, and preserved the known-good snapshot pointer.
 - Production Offsite Backup V2 snapshots were not modified during the isolated integration tests.
 
 These checks prove application-data recovery from the tested offsite snapshot. They do not by themselves prove a complete clean-host Mattermost disaster rebuild.
