@@ -104,14 +104,133 @@ verify_mattermost_backup_environment() {
 
 
 # ==============================================================================
+# Candidate Dataset Capture
+# ==============================================================================
+
+_capture_mattermost_backup_candidate() {
+
+    local candidate_name="$1"
+    local host_candidate="${MATTERMOST_HOST_BACKUP_ROOT}/${candidate_name}"
+    local container_candidate="${MATTERMOST_CONTAINER_BACKUP_ROOT}/${candidate_name}"
+    local capture_failed=false
+    local restart_failed=false
+
+    log_section "Capturing Mattermost Backup Candidate"
+
+    # Create the candidate from inside the unprivileged LXC so ownership maps
+    # correctly on the host bind mount. The restrictive top-level mode protects
+    # application secrets while still allowing explicitly configured ACLs on
+    # the host backup tree to apply.
+    if ! pct exec "$MATTERMOST_CTID" -- install -d -m 0750 \
+        "$container_candidate" \
+        "$container_candidate/database" \
+        "$container_candidate/config" \
+        "$container_candidate/data" \
+        "$container_candidate/plugins" \
+        "$container_candidate/client-plugins"; then
+
+        log_error "Unable to create Mattermost backup candidate directories."
+        return 1
+    fi
+
+    log_info "Stopping Mattermost for a consistent application capture."
+
+    if ! pct exec "$MATTERMOST_CTID" -- systemctl stop "$MATTERMOST_SERVICE"; then
+        log_error "Unable to stop Mattermost."
+        return 1
+    fi
+
+    # Everything after this point must preserve the guarantee that Mattermost
+    # is started again before the function returns.
+
+    if ! pct exec "$MATTERMOST_CTID" -- \
+        runuser -u postgres -- \
+        pg_dump \
+            --format=plain \
+            --no-owner \
+            --no-privileges \
+            "$MATTERMOST_DB_NAME" \
+        > "${host_candidate}/database/mattermost.sql"; then
+
+        log_error "Mattermost PostgreSQL dump failed."
+        capture_failed=true
+    fi
+
+    if [[ "$capture_failed" == false ]] && \
+       ! pct exec "$MATTERMOST_CTID" -- \
+            rsync -aH --delete \
+            /opt/mattermost/config/ \
+            "${container_candidate}/config/"; then
+
+        log_error "Mattermost config capture failed."
+        capture_failed=true
+    fi
+
+    if [[ "$capture_failed" == false ]] && \
+       ! pct exec "$MATTERMOST_CTID" -- \
+            rsync -aH --delete \
+            /opt/mattermost/data/ \
+            "${container_candidate}/data/"; then
+
+        log_error "Mattermost data capture failed."
+        capture_failed=true
+    fi
+
+    if [[ "$capture_failed" == false ]] && \
+       ! pct exec "$MATTERMOST_CTID" -- \
+            rsync -aH --delete \
+            /opt/mattermost/plugins/ \
+            "${container_candidate}/plugins/"; then
+
+        log_error "Mattermost plugin capture failed."
+        capture_failed=true
+    fi
+
+    if [[ "$capture_failed" == false ]] && \
+       ! pct exec "$MATTERMOST_CTID" -- \
+            rsync -aH --delete \
+            /opt/mattermost/client/plugins/ \
+            "${container_candidate}/client-plugins/"; then
+
+        log_error "Mattermost client plugin capture failed."
+        capture_failed=true
+    fi
+
+    # The database dump is sensitive and is created by the host-side shell
+    # redirection above. Restrict it explicitly regardless of the caller umask.
+    if [[ -f "${host_candidate}/database/mattermost.sql" ]]; then
+        chmod 0640 "${host_candidate}/database/mattermost.sql"
+    fi
+
+    log_info "Starting Mattermost."
+
+    if ! pct exec "$MATTERMOST_CTID" -- systemctl start "$MATTERMOST_SERVICE"; then
+        log_error "Mattermost failed to start after backup capture."
+        restart_failed=true
+    elif ! pct exec "$MATTERMOST_CTID" -- systemctl is-active --quiet "$MATTERMOST_SERVICE"; then
+        log_error "Mattermost is not active after backup capture."
+        restart_failed=true
+    fi
+
+    if [[ "$capture_failed" == true || "$restart_failed" == true ]]; then
+        log_error "Mattermost backup candidate capture failed."
+        return 1
+    fi
+
+    log_success "Mattermost backup candidate captured successfully."
+}
+
+
+# ==============================================================================
 # Preparation Entry Point
 # ==============================================================================
 
 prepare_mattermost_backup() {
 
-    # Deliberately fail closed until the application capture and restore
-    # verification stages are implemented and tested. This function is not yet
-    # wired into the main Offsite Backup V2 orchestrator.
+    # Deliberately fail closed until candidate verification and safe promotion
+    # are implemented and tested. The capture function above is not yet invoked
+    # by the production preparation path, and this module is not yet wired into
+    # the main Offsite Backup V2 orchestrator.
     log_error "Mattermost backup preparation is not implemented yet."
     return 1
 }
