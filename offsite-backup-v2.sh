@@ -126,6 +126,10 @@ fi
 
 cleanup() {
 
+    # Application cleanup runs first so services stopped for a consistent
+    # capture are recovered on normal exit and graceful interruption.
+    cleanup_application_backups || true
+
     if [[ -n "${TEMP_SNAPSHOT:-}" && -d "${TEMP_SNAPSHOT:-}" ]]; then
         rm -rf "$TEMP_SNAPSHOT" || true
     fi
