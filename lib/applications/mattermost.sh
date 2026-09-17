@@ -18,8 +18,8 @@
 # 3. Create a consistent Mattermost recovery dataset containing the PostgreSQL
 #    database plus required Mattermost filesystem data.
 # 4. Verify the prepared dataset before returning success.
-# 5. If this module stops Mattermost, guarantee that Mattermost is started again
-#    before the module exits, including on failure.
+# 5. Track whether this backup stopped Mattermost and restart it on normal
+#    failures or graceful process exit/interruption.
 #
 # Non-responsibilities
 # --------------------
@@ -31,6 +31,7 @@
 # ----------
 #   - verify_mattermost_backup_environment
 #   - prepare_mattermost_backup
+#   - cleanup_mattermost_backup
 # ==============================================================================
 
 
@@ -43,6 +44,10 @@ MATTERMOST_SERVICE="${MATTERMOST_SERVICE:-mattermost}"
 MATTERMOST_DB_NAME="${MATTERMOST_DB_NAME:-mattermost}"
 MATTERMOST_HOST_BACKUP_ROOT="${MATTERMOST_HOST_BACKUP_ROOT:-/backup/mattermost}"
 MATTERMOST_CONTAINER_BACKUP_ROOT="${MATTERMOST_CONTAINER_BACKUP_ROOT:-/opt/mattermost/backups}"
+
+# Runtime state used by the orchestrator EXIT cleanup. Set this before the
+# stop attempt so a graceful interruption can still recover the service.
+MATTERMOST_RESTART_REQUIRED=false
 
 
 # ==============================================================================
@@ -129,6 +134,38 @@ _remove_mattermost_candidate() {
 
 
 # ==============================================================================
+# Service Recovery Cleanup
+# ==============================================================================
+
+cleanup_mattermost_backup() {
+
+    if [[ "${MATTERMOST_RESTART_REQUIRED:-false}" != true ]]; then
+        return 0
+    fi
+
+    log_warn "Mattermost was stopped by the backup process. Attempting recovery startup."
+
+    if [[ "$(pct status "$MATTERMOST_CTID" 2>/dev/null)" != "status: running" ]]; then
+        log_error "Unable to restart Mattermost because LXC $MATTERMOST_CTID is not running."
+        return 1
+    fi
+
+    if ! pct exec "$MATTERMOST_CTID" -- systemctl start "$MATTERMOST_SERVICE"; then
+        log_error "Mattermost recovery startup failed."
+        return 1
+    fi
+
+    if ! pct exec "$MATTERMOST_CTID" -- systemctl is-active --quiet "$MATTERMOST_SERVICE"; then
+        log_error "Mattermost is not active after recovery startup."
+        return 1
+    fi
+
+    MATTERMOST_RESTART_REQUIRED=false
+    log_success "Mattermost recovery startup completed."
+}
+
+
+# ==============================================================================
 # Candidate Dataset Capture
 # ==============================================================================
 
@@ -168,13 +205,18 @@ _capture_mattermost_backup_candidate() {
 
     log_info "Stopping Mattermost for a consistent application capture."
 
+    # Set the recovery flag before the stop attempt. If the backup process exits
+    # gracefully at any point after this, the orchestrator EXIT cleanup retries
+    # the service startup.
+    MATTERMOST_RESTART_REQUIRED=true
+
     if ! pct exec "$MATTERMOST_CTID" -- systemctl stop "$MATTERMOST_SERVICE"; then
         log_error "Unable to stop Mattermost."
+        cleanup_mattermost_backup || true
         return 1
     fi
 
-    # Everything after this point explicitly reaches the restart path before
-    # returning so a normal capture failure does not leave Mattermost stopped.
+    # Normal capture failures still reach the explicit restart path below.
 
     # The redirection runs as container root. This keeps the dump owned by the
     # LXC root mapping on the host instead of host UID 0, which is important for
@@ -245,9 +287,16 @@ _capture_mattermost_backup_candidate() {
     elif ! pct exec "$MATTERMOST_CTID" -- systemctl is-active --quiet "$MATTERMOST_SERVICE"; then
         log_error "Mattermost is not active after backup capture."
         restart_failed=true
+    else
+        MATTERMOST_RESTART_REQUIRED=false
     fi
 
     if [[ "$capture_failed" == true || "$restart_failed" == true ]]; then
+
+        if [[ "$restart_failed" == true ]]; then
+            cleanup_mattermost_backup || true
+        fi
+
         log_error "Mattermost backup candidate capture failed."
         return 1
     fi
