@@ -45,9 +45,11 @@ MATTERMOST_DB_NAME="${MATTERMOST_DB_NAME:-mattermost}"
 MATTERMOST_HOST_BACKUP_ROOT="${MATTERMOST_HOST_BACKUP_ROOT:-/backup/mattermost}"
 MATTERMOST_CONTAINER_BACKUP_ROOT="${MATTERMOST_CONTAINER_BACKUP_ROOT:-/opt/mattermost/backups}"
 
-# Runtime state used by the orchestrator EXIT cleanup. Set this before the
-# stop attempt so a graceful interruption can still recover the service.
+# Runtime state used by the orchestrator EXIT cleanup. The restart flag tracks
+# whether this backup may have stopped Mattermost. The active candidate allows
+# cleanup to remove an incomplete capture or recover an interrupted promotion.
 MATTERMOST_RESTART_REQUIRED=false
+MATTERMOST_ACTIVE_CANDIDATE=""
 
 
 # ==============================================================================
@@ -139,29 +141,93 @@ _remove_mattermost_candidate() {
 
 cleanup_mattermost_backup() {
 
-    if [[ "${MATTERMOST_RESTART_REQUIRED:-false}" != true ]]; then
-        return 0
+    local cleanup_failed=false
+    local candidate_name="${MATTERMOST_ACTIVE_CANDIDATE:-}"
+    local host_candidate
+    local current_path
+    local previous_path
+
+    if [[ "${MATTERMOST_RESTART_REQUIRED:-false}" == true ]]; then
+
+        log_warn "Mattermost was stopped by the backup process. Attempting recovery startup."
+
+        if [[ "$(pct status "$MATTERMOST_CTID" 2>/dev/null)" != "status: running" ]]; then
+            log_error "Unable to restart Mattermost because LXC $MATTERMOST_CTID is not running."
+            cleanup_failed=true
+        elif ! pct exec "$MATTERMOST_CTID" -- systemctl start "$MATTERMOST_SERVICE"; then
+            log_error "Mattermost recovery startup failed."
+            cleanup_failed=true
+        elif ! pct exec "$MATTERMOST_CTID" -- systemctl is-active --quiet "$MATTERMOST_SERVICE"; then
+            log_error "Mattermost is not active after recovery startup."
+            cleanup_failed=true
+        else
+            MATTERMOST_RESTART_REQUIRED=false
+            log_success "Mattermost recovery startup completed."
+        fi
+
     fi
 
-    log_warn "Mattermost was stopped by the backup process. Attempting recovery startup."
+    if [[ -n "$candidate_name" ]]; then
 
-    if [[ "$(pct status "$MATTERMOST_CTID" 2>/dev/null)" != "status: running" ]]; then
-        log_error "Unable to restart Mattermost because LXC $MATTERMOST_CTID is not running."
+        if ! _mattermost_candidate_name_is_safe "$candidate_name"; then
+            log_error "Refusing cleanup for unsafe Mattermost candidate name: $candidate_name"
+            cleanup_failed=true
+        else
+            host_candidate="${MATTERMOST_HOST_BACKUP_ROOT}/${candidate_name}"
+            current_path="${MATTERMOST_HOST_BACKUP_ROOT}/current"
+            previous_path="${MATTERMOST_HOST_BACKUP_ROOT}/.previous-${candidate_name#.candidate-}"
+
+            # If interruption happened after current was moved aside but before
+            # candidate promotion completed, restore the previous known-good set.
+            if [[ -d "$previous_path" && ! -e "$current_path" && ! -L "$current_path" ]]; then
+
+                if mv -- "$previous_path" "$current_path"; then
+                    log_warn "Previous Mattermost recovery set restored after interrupted promotion."
+                else
+                    log_error "CRITICAL: unable to restore previous Mattermost recovery set during cleanup."
+                    cleanup_failed=true
+                fi
+
+            fi
+
+            # An active candidate is incomplete unless it has already been moved
+            # into current. Remove only the strictly validated candidate path.
+            if [[ -e "$host_candidate" || -L "$host_candidate" ]]; then
+
+                if _remove_mattermost_candidate "$candidate_name"; then
+                    log_warn "Incomplete Mattermost backup candidate removed during cleanup."
+                else
+                    log_error "Unable to remove incomplete Mattermost backup candidate during cleanup."
+                    cleanup_failed=true
+                fi
+
+            fi
+
+            # If the verified candidate was already promoted before interruption,
+            # current is valid and the preserved previous set can be discarded.
+            if [[ -d "$previous_path" && -d "$current_path" && ! -e "$host_candidate" ]]; then
+
+                if rm -rf -- "$previous_path"; then
+                    log_warn "Previous Mattermost recovery set cleaned after interrupted promotion."
+                else
+                    log_error "Unable to clean previous Mattermost recovery set after interrupted promotion."
+                    cleanup_failed=true
+                fi
+
+            fi
+
+            if [[ ! -e "$host_candidate" && ! -L "$host_candidate" && ! -d "$previous_path" ]]; then
+                MATTERMOST_ACTIVE_CANDIDATE=""
+            fi
+        fi
+
+    fi
+
+    if [[ "$cleanup_failed" == true ]]; then
         return 1
     fi
 
-    if ! pct exec "$MATTERMOST_CTID" -- systemctl start "$MATTERMOST_SERVICE"; then
-        log_error "Mattermost recovery startup failed."
-        return 1
-    fi
-
-    if ! pct exec "$MATTERMOST_CTID" -- systemctl is-active --quiet "$MATTERMOST_SERVICE"; then
-        log_error "Mattermost is not active after recovery startup."
-        return 1
-    fi
-
-    MATTERMOST_RESTART_REQUIRED=false
-    log_success "Mattermost recovery startup completed."
+    return 0
 }
 
 
@@ -529,8 +595,12 @@ prepare_mattermost_backup() {
     local candidate_name
 
     candidate_name=".candidate-$(date '+%Y-%m-%d_%H-%M-%S')"
+    MATTERMOST_ACTIVE_CANDIDATE="$candidate_name"
 
-    verify_mattermost_backup_environment || return 1
+    verify_mattermost_backup_environment || {
+        MATTERMOST_ACTIVE_CANDIDATE=""
+        return 1
+    }
 
     if ! _capture_mattermost_backup_candidate "$candidate_name"; then
         _remove_mattermost_candidate "$candidate_name" || true
@@ -547,6 +617,8 @@ prepare_mattermost_backup() {
         _remove_mattermost_candidate "$candidate_name" || true
         return 1
     fi
+
+    MATTERMOST_ACTIVE_CANDIDATE=""
 
     log_success "Mattermost application recovery set prepared successfully."
 }
