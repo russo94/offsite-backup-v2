@@ -5,25 +5,46 @@
 # Application Backup Coordinator
 # ==============================================================================
 #
-# This module will coordinate application-specific preparation steps that must
-# complete before the normal Offsite Backup V2 snapshot is created.
+# Coordinates application-specific preparation steps that must complete before
+# the normal Offsite Backup V2 snapshot is created.
 #
-# Application modules are responsible only for preparing a recoverable dataset
-# under SOURCE. Snapshot creation, retention, metadata, health reporting, and
-# notifications remain responsibilities of the existing Offsite Backup V2
-# modules.
+# Application modules prepare recoverable datasets under SOURCE. Snapshot
+# creation, retention, metadata, health reporting, and notifications remain
+# responsibilities of the existing Offsite Backup V2 modules.
 #
 # Public API:
 #   - prepare_application_backups
 # ==============================================================================
 
 
+APPLICATIONS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+ENABLE_MATTERMOST_BACKUP="${ENABLE_MATTERMOST_BACKUP:-false}"
+
+source "${APPLICATIONS_DIR}/applications/mattermost.sh"
+
+
 prepare_application_backups() {
 
     log_section "Preparing Application Backups"
 
-    # Application-specific modules will be invoked here as they are enabled.
-    # Intentionally a no-op until the first module is implemented and verified.
-    log_info "No application backup modules are enabled."
+    case "$ENABLE_MATTERMOST_BACKUP" in
+
+        true)
+            log_info "Mattermost application backup is enabled."
+            prepare_mattermost_backup
+            ;;
+
+        false)
+            log_info "Mattermost application backup is disabled."
+            ;;
+
+        *)
+            log_error "Invalid ENABLE_MATTERMOST_BACKUP value: $ENABLE_MATTERMOST_BACKUP"
+            log_error "Allowed values: true or false"
+            return 1
+            ;;
+
+    esac
 
 }
