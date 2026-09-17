@@ -173,9 +173,9 @@ homeassistant-backup-sync.timer
 
 Status:
 
-- Implemented on feature branch `feature/mattermost-application-backup`
-- Verified in an isolated end-to-end Offsite Backup V2 integration test on 2026-09-18
-- Not yet enabled in the production Offsite Backup V2 configuration
+- Integrated into Offsite Backup V2 production `main`
+- Enabled in the production Offsite Backup V2 configuration on 2026-09-18
+- Verified in both isolated end-to-end testing and a production Offsite Backup V2 run
 
 Local recovery set:
 
@@ -232,7 +232,21 @@ Isolated verification performed on 2026-09-18 confirmed:
 - A SIGTERM interruption during PostgreSQL restore verification left no temporary verification database, staged SQL file, candidate, or previous recovery-set directory, while preserving the known-good snapshot pointer.
 - Production Offsite Backup V2 snapshots were not modified during the isolated integration tests.
 
-These checks prove application-data recovery from the tested offsite snapshot. They do not by themselves prove a complete clean-host Mattermost disaster rebuild.
+### Production rollout verification
+
+Production validation on 2026-09-18 confirmed:
+
+- Offsite Backup V2 completed successfully with exit code 0.
+- Mattermost application preparation completed before snapshot creation.
+- Mattermost restarted successfully and was active after the backup.
+- PostgreSQL restore verification matched the live database at 133 public tables.
+- Incremental production snapshot `2026-09-18_01-45-47` was created successfully.
+- The production snapshot contains the database dump, configuration, data, server plugins, and client plugins.
+- The Mattermost recovery set inside the production snapshot is approximately 720 MB.
+- No Mattermost candidate, previous-recovery, temporary verification database, or staged verification SQL artifacts remained after completion.
+- Production retention kept the applicable daily, weekly, and monthly representatives and deleted only the eligible `2026-09-15_05-00-10` snapshot.
+
+These checks prove application-data recovery from the tested offsite snapshots and successful production integration. They do not by themselves prove a complete clean-host Mattermost disaster rebuild.
 
 ---
 
@@ -303,7 +317,7 @@ The system provides:
 
 All production backup jobs run automatically using systemd timers.
 
-Application-specific preparation can be integrated directly into Offsite Backup V2 when it must occur immediately before the offsite snapshot. Mattermost uses this model on the feature branch so the offsite snapshot captures a freshly verified recovery set.
+Application-specific preparation can be integrated directly into Offsite Backup V2 when it must occur immediately before the offsite snapshot. Mattermost uses this model in production so the offsite snapshot captures a freshly verified recovery set.
 
 ---
 
