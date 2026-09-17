@@ -176,16 +176,24 @@ _capture_mattermost_backup_candidate() {
     # Everything after this point explicitly reaches the restart path before
     # returning so a normal capture failure does not leave Mattermost stopped.
 
+    # The redirection runs as container root. This keeps the dump owned by the
+    # LXC root mapping on the host instead of host UID 0, which is important for
+    # an unprivileged bind mount. PostgreSQL still performs the database read.
     if ! pct exec "$MATTERMOST_CTID" -- \
-        runuser -u postgres -- \
-        pg_dump \
-            --format=plain \
-            --no-owner \
-            --no-privileges \
-            "$MATTERMOST_DB_NAME" \
-        > "${host_candidate}/database/mattermost.sql"; then
+        sh -c 'runuser -u postgres -- pg_dump --format=plain --no-owner --no-privileges "$1" > "$2"' \
+        sh \
+        "$MATTERMOST_DB_NAME" \
+        "${container_candidate}/database/mattermost.sql"; then
 
         log_error "Mattermost PostgreSQL dump failed."
+        capture_failed=true
+    fi
+
+    if [[ "$capture_failed" == false ]] && \
+       ! pct exec "$MATTERMOST_CTID" -- \
+            chmod 0640 "${container_candidate}/database/mattermost.sql"; then
+
+        log_error "Unable to secure Mattermost PostgreSQL dump permissions."
         capture_failed=true
     fi
 
@@ -229,11 +237,6 @@ _capture_mattermost_backup_candidate() {
         capture_failed=true
     fi
 
-    # The database dump is sensitive and is created by host-side redirection.
-    if [[ -f "${host_candidate}/database/mattermost.sql" ]]; then
-        chmod 0640 "${host_candidate}/database/mattermost.sql"
-    fi
-
     log_info "Starting Mattermost."
 
     if ! pct exec "$MATTERMOST_CTID" -- systemctl start "$MATTERMOST_SERVICE"; then
@@ -263,6 +266,7 @@ _verify_mattermost_backup_candidate() {
     local host_candidate="${MATTERMOST_HOST_BACKUP_ROOT}/${candidate_name}"
     local container_candidate="${MATTERMOST_CONTAINER_BACKUP_ROOT}/${candidate_name}"
     local verify_db="mattermost_restore_verify_$(date +%s)_$$"
+    local verify_sql="/var/tmp/${verify_db}.sql"
     local live_tables
     local restored_tables
     local verify_failed=false
@@ -303,11 +307,30 @@ _verify_mattermost_backup_candidate() {
         return 1
     fi
 
+    # The recovery tree is intentionally restricted. Copy the dump to a
+    # temporary PostgreSQL-owned file for isolated restore verification rather
+    # than weakening permissions on the backup itself.
+    if ! pct exec "$MATTERMOST_CTID" -- \
+        cp -- "${container_candidate}/database/mattermost.sql" "$verify_sql"; then
+
+        log_error "Unable to stage Mattermost dump for restore verification."
+        return 1
+    fi
+
+    if ! pct exec "$MATTERMOST_CTID" -- chown postgres:postgres "$verify_sql" || \
+       ! pct exec "$MATTERMOST_CTID" -- chmod 0600 "$verify_sql"; then
+
+        pct exec "$MATTERMOST_CTID" -- rm -f -- "$verify_sql" || true
+        log_error "Unable to secure temporary Mattermost verification dump."
+        return 1
+    fi
+
     log_info "Restoring Mattermost database into temporary verification database."
 
     if ! pct exec "$MATTERMOST_CTID" -- \
         runuser -u postgres -- createdb "$verify_db"; then
 
+        pct exec "$MATTERMOST_CTID" -- rm -f -- "$verify_sql" || true
         log_error "Unable to create temporary Mattermost verification database."
         return 1
     fi
@@ -317,7 +340,7 @@ _verify_mattermost_backup_candidate() {
         psql \
             --set=ON_ERROR_STOP=1 \
             --dbname="$verify_db" \
-            --file="${container_candidate}/database/mattermost.sql" \
+            --file="$verify_sql" \
             >/dev/null; then
 
         log_error "Mattermost database restore verification failed."
@@ -356,7 +379,13 @@ _verify_mattermost_backup_candidate() {
     if ! pct exec "$MATTERMOST_CTID" -- \
         runuser -u postgres -- dropdb --if-exists "$verify_db"; then
 
+        pct exec "$MATTERMOST_CTID" -- rm -f -- "$verify_sql" || true
         log_error "Unable to remove temporary Mattermost verification database: $verify_db"
+        return 1
+    fi
+
+    if ! pct exec "$MATTERMOST_CTID" -- rm -f -- "$verify_sql"; then
+        log_error "Unable to remove temporary Mattermost verification dump: $verify_sql"
         return 1
     fi
 
