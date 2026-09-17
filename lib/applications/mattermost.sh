@@ -90,7 +90,7 @@ verify_mattermost_backup_environment() {
 
     local required_command
 
-    for required_command in pg_dump pg_restore psql rsync; do
+    for required_command in pg_dump psql createdb dropdb rsync python3; do
 
         if ! pct exec "$MATTERMOST_CTID" -- sh -c "command -v '$required_command' >/dev/null 2>&1"; then
             log_error "Required Mattermost backup command not found in LXC $MATTERMOST_CTID: $required_command"
@@ -100,6 +100,31 @@ verify_mattermost_backup_environment() {
     done
 
     log_success "Mattermost backup environment verified."
+}
+
+
+# ==============================================================================
+# Candidate Helpers
+# ==============================================================================
+
+_mattermost_candidate_name_is_safe() {
+
+    local candidate_name="$1"
+
+    [[ "$candidate_name" =~ ^\.candidate-[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}-[0-9]{2}-[0-9]{2}$ ]]
+}
+
+
+_remove_mattermost_candidate() {
+
+    local candidate_name="$1"
+
+    if ! _mattermost_candidate_name_is_safe "$candidate_name"; then
+        log_error "Refusing to remove unsafe Mattermost candidate name: $candidate_name"
+        return 1
+    fi
+
+    rm -rf -- "${MATTERMOST_HOST_BACKUP_ROOT}/${candidate_name}"
 }
 
 
@@ -115,12 +140,20 @@ _capture_mattermost_backup_candidate() {
     local capture_failed=false
     local restart_failed=false
 
+    if ! _mattermost_candidate_name_is_safe "$candidate_name"; then
+        log_error "Unsafe Mattermost candidate name: $candidate_name"
+        return 1
+    fi
+
     log_section "Capturing Mattermost Backup Candidate"
 
+    if [[ -e "$host_candidate" ]]; then
+        log_error "Mattermost backup candidate already exists: $host_candidate"
+        return 1
+    fi
+
     # Create the candidate from inside the unprivileged LXC so ownership maps
-    # correctly on the host bind mount. The restrictive top-level mode protects
-    # application secrets while still allowing explicitly configured ACLs on
-    # the host backup tree to apply.
+    # correctly on the host bind mount.
     if ! pct exec "$MATTERMOST_CTID" -- install -d -m 0750 \
         "$container_candidate" \
         "$container_candidate/database" \
@@ -140,8 +173,8 @@ _capture_mattermost_backup_candidate() {
         return 1
     fi
 
-    # Everything after this point must preserve the guarantee that Mattermost
-    # is started again before the function returns.
+    # Everything after this point explicitly reaches the restart path before
+    # returning so a normal capture failure does not leave Mattermost stopped.
 
     if ! pct exec "$MATTERMOST_CTID" -- \
         runuser -u postgres -- \
@@ -196,8 +229,7 @@ _capture_mattermost_backup_candidate() {
         capture_failed=true
     fi
 
-    # The database dump is sensitive and is created by the host-side shell
-    # redirection above. Restrict it explicitly regardless of the caller umask.
+    # The database dump is sensitive and is created by host-side redirection.
     if [[ -f "${host_candidate}/database/mattermost.sql" ]]; then
         chmod 0640 "${host_candidate}/database/mattermost.sql"
     fi
@@ -222,15 +254,221 @@ _capture_mattermost_backup_candidate() {
 
 
 # ==============================================================================
+# Candidate Restore Verification
+# ==============================================================================
+
+_verify_mattermost_backup_candidate() {
+
+    local candidate_name="$1"
+    local host_candidate="${MATTERMOST_HOST_BACKUP_ROOT}/${candidate_name}"
+    local container_candidate="${MATTERMOST_CONTAINER_BACKUP_ROOT}/${candidate_name}"
+    local verify_db="mattermost_restore_verify_$(date +%s)_$$"
+    local live_tables
+    local restored_tables
+    local verify_failed=false
+
+    if ! _mattermost_candidate_name_is_safe "$candidate_name"; then
+        log_error "Unsafe Mattermost candidate name: $candidate_name"
+        return 1
+    fi
+
+    log_section "Verifying Mattermost Backup Candidate"
+
+    if [[ ! -s "${host_candidate}/database/mattermost.sql" ]]; then
+        log_error "Mattermost database dump is missing or empty."
+        return 1
+    fi
+
+    if [[ ! -s "${host_candidate}/config/config.json" ]]; then
+        log_error "Mattermost config.json is missing or empty."
+        return 1
+    fi
+
+    local required_directory
+
+    for required_directory in data plugins client-plugins; do
+
+        if [[ ! -d "${host_candidate}/${required_directory}" ]]; then
+            log_error "Mattermost backup directory is missing: ${required_directory}"
+            return 1
+        fi
+
+    done
+
+    if ! pct exec "$MATTERMOST_CTID" -- \
+        python3 -c 'import json,sys; json.load(open(sys.argv[1], encoding="utf-8"))' \
+        "${container_candidate}/config/config.json"; then
+
+        log_error "Mattermost config.json failed JSON validation."
+        return 1
+    fi
+
+    log_info "Restoring Mattermost database into temporary verification database."
+
+    if ! pct exec "$MATTERMOST_CTID" -- \
+        runuser -u postgres -- createdb "$verify_db"; then
+
+        log_error "Unable to create temporary Mattermost verification database."
+        return 1
+    fi
+
+    if ! pct exec "$MATTERMOST_CTID" -- \
+        runuser -u postgres -- \
+        psql \
+            --set=ON_ERROR_STOP=1 \
+            --dbname="$verify_db" \
+            --file="${container_candidate}/database/mattermost.sql" \
+            >/dev/null; then
+
+        log_error "Mattermost database restore verification failed."
+        verify_failed=true
+    fi
+
+    if [[ "$verify_failed" == false ]]; then
+
+        live_tables=$(pct exec "$MATTERMOST_CTID" -- \
+            runuser -u postgres -- \
+            psql -At \
+                --dbname="$MATTERMOST_DB_NAME" \
+                --command="SELECT count(*) FROM pg_tables WHERE schemaname = 'public';")
+
+        restored_tables=$(pct exec "$MATTERMOST_CTID" -- \
+            runuser -u postgres -- \
+            psql -At \
+                --dbname="$verify_db" \
+                --command="SELECT count(*) FROM pg_tables WHERE schemaname = 'public';")
+
+        if [[ ! "$live_tables" =~ ^[0-9]+$ || ! "$restored_tables" =~ ^[0-9]+$ ]]; then
+            log_error "Unable to determine Mattermost database table counts."
+            verify_failed=true
+        elif (( live_tables == 0 )); then
+            log_error "Live Mattermost database contains no public tables."
+            verify_failed=true
+        elif [[ "$live_tables" != "$restored_tables" ]]; then
+            log_error "Mattermost restore table count mismatch: live=${live_tables}, restored=${restored_tables}"
+            verify_failed=true
+        else
+            log_success "Mattermost database restore verified: ${restored_tables} public tables."
+        fi
+
+    fi
+
+    if ! pct exec "$MATTERMOST_CTID" -- \
+        runuser -u postgres -- dropdb --if-exists "$verify_db"; then
+
+        log_error "Unable to remove temporary Mattermost verification database: $verify_db"
+        return 1
+    fi
+
+    if [[ "$verify_failed" == true ]]; then
+        return 1
+    fi
+
+    log_success "Mattermost backup candidate verified successfully."
+}
+
+
+# ==============================================================================
+# Candidate Promotion
+# ==============================================================================
+
+_promote_mattermost_backup_candidate() {
+
+    local candidate_name="$1"
+    local host_candidate="${MATTERMOST_HOST_BACKUP_ROOT}/${candidate_name}"
+    local current_path="${MATTERMOST_HOST_BACKUP_ROOT}/current"
+    local previous_path="${MATTERMOST_HOST_BACKUP_ROOT}/.previous-${candidate_name#.candidate-}"
+    local had_current=false
+
+    if ! _mattermost_candidate_name_is_safe "$candidate_name"; then
+        log_error "Unsafe Mattermost candidate name: $candidate_name"
+        return 1
+    fi
+
+    log_section "Promoting Mattermost Backup Candidate"
+
+    if [[ ! -d "$host_candidate" ]]; then
+        log_error "Mattermost backup candidate not found: $host_candidate"
+        return 1
+    fi
+
+    if [[ -e "$previous_path" || -L "$previous_path" ]]; then
+        log_error "Previous promotion path already exists: $previous_path"
+        return 1
+    fi
+
+    if [[ -e "$current_path" || -L "$current_path" ]]; then
+
+        if [[ ! -d "$current_path" || -L "$current_path" ]]; then
+            log_error "Mattermost current recovery set is not a normal directory: $current_path"
+            return 1
+        fi
+
+        if ! mv -- "$current_path" "$previous_path"; then
+            log_error "Unable to preserve previous Mattermost recovery set."
+            return 1
+        fi
+
+        had_current=true
+    fi
+
+    if ! mv -- "$host_candidate" "$current_path"; then
+
+        log_error "Unable to promote Mattermost backup candidate."
+
+        if [[ "$had_current" == true ]]; then
+
+            if mv -- "$previous_path" "$current_path"; then
+                log_warn "Previous Mattermost recovery set restored after promotion failure."
+            else
+                log_error "CRITICAL: previous Mattermost recovery set could not be restored automatically."
+            fi
+
+        fi
+
+        return 1
+    fi
+
+    if [[ "$had_current" == true ]]; then
+
+        if ! rm -rf -- "$previous_path"; then
+            log_error "New Mattermost recovery set is valid, but previous recovery set cleanup failed."
+            return 1
+        fi
+
+    fi
+
+    log_success "Mattermost recovery set promoted to: $current_path"
+}
+
+
+# ==============================================================================
 # Preparation Entry Point
 # ==============================================================================
 
 prepare_mattermost_backup() {
 
-    # Deliberately fail closed until candidate verification and safe promotion
-    # are implemented and tested. The capture function above is not yet invoked
-    # by the production preparation path, and this module is not yet wired into
-    # the main Offsite Backup V2 orchestrator.
-    log_error "Mattermost backup preparation is not implemented yet."
-    return 1
+    local candidate_name
+
+    candidate_name=".candidate-$(date '+%Y-%m-%d_%H-%M-%S')"
+
+    verify_mattermost_backup_environment || return 1
+
+    if ! _capture_mattermost_backup_candidate "$candidate_name"; then
+        _remove_mattermost_candidate "$candidate_name" || true
+        return 1
+    fi
+
+    if ! _verify_mattermost_backup_candidate "$candidate_name"; then
+        log_error "Mattermost candidate verification failed. Previous recovery set remains untouched."
+        _remove_mattermost_candidate "$candidate_name" || true
+        return 1
+    fi
+
+    if ! _promote_mattermost_backup_candidate "$candidate_name"; then
+        _remove_mattermost_candidate "$candidate_name" || true
+        return 1
+    fi
+
+    log_success "Mattermost application recovery set prepared successfully."
 }
